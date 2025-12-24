@@ -101,7 +101,24 @@ When reviewing code or plans, be thorough but practical.`);
 // gemini-3-pro-image-preview = Nano Banana Pro (advanced, better text rendering)
 const IMAGE_MODEL_FAST = "gemini-2.5-flash-image";
 const IMAGE_MODEL_PRO = "gemini-3-pro-image-preview";
-const DEFAULT_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || IMAGE_MODEL_FAST;
+
+// Keywords that trigger Nano Banana Pro (text-heavy, precision work)
+const PRO_KEYWORDS = [
+  "nano banana pro", "nanobanana pro", "pro model",
+  "infographic", "diagram", "chart", "graph",
+  "text", "typography", "font", "lettering", "writing",
+  "slide", "presentation", "deck",
+  "logo", "brand", "poster", "flyer", "banner",
+  "document", "page", "layout",
+  "high quality", "high-quality", "hq", "4k",
+  "detailed text", "readable", "legible"
+];
+
+// Auto-detect if prompt needs Pro model
+function shouldUsePro(prompt: string): boolean {
+  const lower = prompt.toLowerCase();
+  return PRO_KEYWORDS.some(keyword => lower.includes(keyword));
+}
 
 // Generate images using Nano Banana
 async function generateImage(
@@ -115,7 +132,9 @@ async function generateImage(
 ): Promise<{ images: Array<{ base64: string; mimeType: string }>; prompt: string; model: string }> {
   const numberOfImages = options.numberOfImages || 1;
   const aspectRatio = options.aspectRatio || "1:1";
-  const model = options.usePro ? IMAGE_MODEL_PRO : DEFAULT_IMAGE_MODEL;
+  // Auto-detect Pro if prompt contains keywords, or use explicit usePro flag
+  const usePro = options.usePro ?? shouldUsePro(prompt);
+  const model = usePro ? IMAGE_MODEL_PRO : IMAGE_MODEL_FAST;
 
   const response = await ai.models.generateImages({
     model: model,
@@ -250,11 +269,14 @@ Two models available:
 - Nano Banana (default): Fast, cheap (~$0.04/image), good for most use cases
 - Nano Banana Pro: Advanced model with better text rendering, infographics, diagrams
 
+Auto-detection: Says "nano banana pro" or mentions text/infographic/diagram/chart/logo/poster
+in prompt → automatically uses Pro model.
+
 Parameters:
 - prompt: Text description of the image to generate (required)
 - numberOfImages: How many images to generate (1-4, default: 1)
 - aspectRatio: Image aspect ratio ("1:1", "3:4", "4:3", "9:16", "16:9", default: "1:1")
-- usePro: Use Nano Banana Pro for better quality (default: false)
+- usePro: Force Nano Banana Pro (auto-detected from prompt if not specified)
 - outputPath: Optional path to save images`,
     inputSchema: {
       type: "object" as const,
