@@ -6,7 +6,7 @@ An MCP (Model Context Protocol) server that provides access to Google's Gemini A
 
 - **gemini** - Start a new Gemini conversation with configurable context
 - **gemini-reply** - Continue multi-turn conversations
-- **gemini-image** - Generate images using Imagen 4.0
+- **gemini-image** - Generate images using Nano Banana (Gemini's native image generation)
 
 ## Installation
 
@@ -72,13 +72,38 @@ Continue an existing conversation.
 
 ### gemini-image
 
-Generate images from text prompts.
+Generate images using Nano Banana, Google's native image generation built into Gemini.
+
+**Models:**
+- **Nano Banana** (`gemini-2.5-flash-image`) - Fast, cost-effective (~$0.04/image), good for most use cases
+- **Nano Banana Pro** (`gemini-3-pro-image-preview`) - Advanced model with better text rendering, ideal for infographics, diagrams, and text-heavy images
+
+**Auto-Detection:** The server automatically uses Nano Banana Pro when your prompt contains keywords like:
+- "nano banana pro", "pro model"
+- "infographic", "diagram", "chart", "graph"
+- "text", "typography", "font", "lettering"
+- "logo", "brand", "poster", "flyer", "banner"
+- "slide", "presentation", "document"
+- "high quality", "4k", "detailed text"
 
 **Parameters:**
 - `prompt` (required) - Description of the image to generate
 - `numberOfImages` - How many images (1-4, default: 1)
 - `aspectRatio` - Image ratio: "1:1", "3:4", "4:3", "9:16", "16:9"
+- `usePro` - Force Nano Banana Pro (auto-detected from prompt if not specified)
 - `outputPath` - Directory to save generated images
+
+**Example:**
+```
+// Auto-detects Pro model
+"Create an infographic showing the software development lifecycle"
+
+// Explicitly request Pro
+{ "prompt": "A sunset over mountains", "usePro": true }
+
+// Fast generation (default)
+"A cute cat wearing a hat"
+```
 
 ## Development
 
