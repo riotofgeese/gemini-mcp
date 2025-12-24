@@ -120,7 +120,7 @@ function shouldUsePro(prompt: string): boolean {
   return PRO_KEYWORDS.some(keyword => lower.includes(keyword));
 }
 
-// Generate images using Nano Banana
+// Generate images using Nano Banana (via generateContent with IMAGE modality)
 async function generateImage(
   prompt: string,
   options: {
@@ -136,24 +136,32 @@ async function generateImage(
   const usePro = options.usePro ?? shouldUsePro(prompt);
   const model = usePro ? IMAGE_MODEL_PRO : IMAGE_MODEL_FAST;
 
-  const response = await ai.models.generateImages({
-    model: model,
-    prompt: prompt,
-    config: {
-      numberOfImages: numberOfImages,
-      aspectRatio: aspectRatio,
-    },
-  });
-
   const images: Array<{ base64: string; mimeType: string }> = [];
 
-  if (response.generatedImages) {
-    for (const generatedImage of response.generatedImages) {
-      if (generatedImage.image?.imageBytes) {
-        images.push({
-          base64: generatedImage.image.imageBytes,
-          mimeType: "image/png",
-        });
+  // Nano Banana uses generateContent with response_modalities: ['IMAGE']
+  // Generate each image separately (generateContent returns 1 image per call)
+  for (let i = 0; i < numberOfImages; i++) {
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: prompt,
+      config: {
+        responseModalities: ["IMAGE"],
+        // Include aspect ratio in the generation config
+        ...(aspectRatio !== "1:1" && { 
+          generationConfig: { aspectRatio } 
+        }),
+      },
+    });
+
+    // Extract image from response parts
+    if (response.candidates && response.candidates[0]?.content?.parts) {
+      for (const part of response.candidates[0].content.parts) {
+        if (part.inlineData?.data) {
+          images.push({
+            base64: part.inlineData.data,
+            mimeType: part.inlineData.mimeType || "image/png",
+          });
+        }
       }
     }
   }
