@@ -96,23 +96,29 @@ When reviewing code or plans, be thorough but practical.`);
   return parts.join("\n");
 }
 
-// Image generation models - Imagen 4.0 is latest
-const IMAGE_MODEL = "imagen-4.0-generate-001";
+// Image generation models - Nano Banana (Gemini native image generation)
+// gemini-2.5-flash-image = Nano Banana (fast, cheap ~$0.04/image)
+// gemini-3-pro-image-preview = Nano Banana Pro (advanced, better text rendering)
+const IMAGE_MODEL_FAST = "gemini-2.5-flash-image";
+const IMAGE_MODEL_PRO = "gemini-3-pro-image-preview";
+const DEFAULT_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || IMAGE_MODEL_FAST;
 
-// Generate images using Imagen
+// Generate images using Nano Banana
 async function generateImage(
   prompt: string,
   options: {
     numberOfImages?: number;
     aspectRatio?: string;
     outputDir?: string;
+    usePro?: boolean;
   } = {}
-): Promise<{ images: Array<{ base64: string; mimeType: string }>; prompt: string }> {
+): Promise<{ images: Array<{ base64: string; mimeType: string }>; prompt: string; model: string }> {
   const numberOfImages = options.numberOfImages || 1;
   const aspectRatio = options.aspectRatio || "1:1";
+  const model = options.usePro ? IMAGE_MODEL_PRO : DEFAULT_IMAGE_MODEL;
 
   const response = await ai.models.generateImages({
-    model: IMAGE_MODEL,
+    model: model,
     prompt: prompt,
     config: {
       numberOfImages: numberOfImages,
@@ -133,7 +139,7 @@ async function generateImage(
     }
   }
 
-  return { images, prompt };
+  return { images, prompt, model };
 }
 
 // Call Gemini API
@@ -238,16 +244,18 @@ Use this to continue a multi-turn conversation started with the 'gemini' tool.`,
   },
   {
     name: "gemini-image",
-    description: `Generate images using Google Imagen 4.0.
+    description: `Generate images using Nano Banana (Gemini's native image generation).
 
-Create AI-generated images from text prompts. Returns base64-encoded PNG images.
-Supports multiple images per request and various aspect ratios.
+Two models available:
+- Nano Banana (default): Fast, cheap (~$0.04/image), good for most use cases
+- Nano Banana Pro: Advanced model with better text rendering, infographics, diagrams
 
 Parameters:
 - prompt: Text description of the image to generate (required)
 - numberOfImages: How many images to generate (1-4, default: 1)
 - aspectRatio: Image aspect ratio ("1:1", "3:4", "4:3", "9:16", "16:9", default: "1:1")
-- outputPath: Optional path to save images (will save as prompt-1.png, prompt-2.png, etc.)`,
+- usePro: Use Nano Banana Pro for better quality (default: false)
+- outputPath: Optional path to save images`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -265,6 +273,11 @@ Parameters:
           type: "string",
           enum: ["1:1", "3:4", "4:3", "9:16", "16:9"],
           description: "Aspect ratio of generated images",
+        },
+        usePro: {
+          type: "boolean",
+          description: "Use Nano Banana Pro for higher quality (better text, infographics)",
+          default: false,
         },
         outputPath: {
           type: "string",
@@ -397,17 +410,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
 
     } else if (name === "gemini-image") {
-      const { prompt, numberOfImages, aspectRatio, outputPath } = args as {
+      const { prompt, numberOfImages, aspectRatio, usePro, outputPath } = args as {
         prompt: string;
         numberOfImages?: number;
         aspectRatio?: string;
+        usePro?: boolean;
         outputPath?: string;
       };
 
-      // Generate images
+      // Generate images using Nano Banana
       const result = await generateImage(prompt, {
         numberOfImages: numberOfImages || 1,
         aspectRatio: aspectRatio || "1:1",
+        usePro: usePro || false,
       });
 
       // If outputPath provided, save images to disk
@@ -439,7 +454,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // Add summary text
       content.push({
         type: "text",
-        text: `Generated ${result.images.length} image(s) for prompt: "${prompt}"${savedPaths.length > 0 ? `\n\nSaved to:\n${savedPaths.join("\n")}` : ""}`,
+        text: `Generated ${result.images.length} image(s) using ${result.model} for prompt: "${prompt}"${savedPaths.length > 0 ? `\n\nSaved to:\n${savedPaths.join("\n")}` : ""}`,
       });
 
       // Add images as base64
