@@ -7,6 +7,8 @@ An MCP (Model Context Protocol) server that provides access to Google's Gemini A
 - **gemini** - Start a new Gemini conversation with configurable context
 - **gemini-reply** - Continue multi-turn conversations
 - **gemini-image** - Generate images using Nano Banana (Gemini's native image generation)
+- **gemini-video-generate** - Start video generation with Veo 3.1
+- **gemini-video-check** - Check video generation status and retrieve completed videos
 
 ## Installation
 
@@ -104,6 +106,47 @@ Generate images using Nano Banana, Google's native image generation built into G
 // Fast generation (default)
 "A cute cat wearing a hat"
 ```
+
+### gemini-video-generate
+
+Start video generation using Veo 3.1, Google's advanced video generation model.
+
+**Important:** Video generation is asynchronous. This tool returns immediately with an operation ID. Use `gemini-video-check` to poll for completion (typically 30-60 seconds).
+
+**Parameters:**
+- `prompt` (required) - Description of the video to generate
+- `aspectRatio` - Video ratio: "16:9" (default), "9:16"
+- `resolution` - Video resolution: "480p", "720p" (default)
+- `firstFrameBase64` - Optional base64 image to use as first frame (generate with gemini-image first)
+
+**Returns:** Operation ID for checking status
+
+**Example Workflow:**
+```
+1. gemini-video-generate: "A cat playing with a ball of yarn"
+   → Returns: { operationId: "op-123..." }
+
+2. Wait 30-60 seconds
+
+3. gemini-video-check: { operationId: "op-123..." }
+   → Returns: { status: "processing", elapsed: "45s" }
+   OR
+   → Returns: { status: "complete", videoData: "..." }
+```
+
+### gemini-video-check
+
+Check the status of a video generation operation and retrieve completed videos.
+
+**Parameters:**
+- `operationId` - Operation ID from gemini-video-generate (optional - uses last operation if omitted)
+- `outputPath` - Directory to save the completed video
+
+**Returns:**
+- If processing: Status and elapsed time
+- If complete: Video data (base64) and optional saved file path
+
+**Tip:** You can create a custom first frame using `gemini-image`, then pass it to `gemini-video-generate` with `firstFrameBase64` for more control over your video.
 
 ## Development
 

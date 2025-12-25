@@ -37,6 +37,20 @@ interface ConversationSession {
 
 const sessions = new Map<string, ConversationSession>();
 
+// Video generation operation storage
+interface VideoOperation {
+  operationId: string;
+  prompt: string;
+  startedAt: number;
+  aspectRatio?: string;
+}
+
+const videoOperations = new Map<string, VideoOperation>();
+let lastVideoOperationId: string | null = null;
+
+// Video generation model - Veo 3.1
+const VIDEO_MODEL = "veo-3.1-generate-preview";
+
 // Clean up old sessions (older than 1 hour)
 function cleanupSessions() {
   const oneHourAgo = Date.now() - 60 * 60 * 1000;
@@ -317,6 +331,73 @@ Parameters:
       required: ["prompt"],
     },
   },
+  {
+    name: "gemini-video-generate",
+    description: `Generate a video using Veo 3.1 (Google's video generation model).
+
+This starts an async video generation that takes 1-5 minutes. Returns an operation ID
+that you can use with gemini-video-check to poll for completion.
+
+Parameters:
+- prompt: Text description of the video to generate (required)
+- aspectRatio: Video aspect ratio ("16:9" or "9:16", default: "16:9")
+- resolution: Video resolution ("720p", default: "720p")
+- firstFrameBase64: Optional base64 PNG image to use as first frame (from gemini-image)
+
+Workflow:
+1. Call gemini-video-generate → returns operationId
+2. Wait 30-60 seconds
+3. Call gemini-video-check with operationId → returns status or video`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        prompt: {
+          type: "string",
+          description: "Text description of the video to generate",
+        },
+        aspectRatio: {
+          type: "string",
+          enum: ["16:9", "9:16"],
+          description: "Video aspect ratio (default: 16:9)",
+        },
+        resolution: {
+          type: "string",
+          enum: ["720p"],
+          description: "Video resolution (default: 720p)",
+        },
+        firstFrameBase64: {
+          type: "string",
+          description: "Optional base64 PNG image to use as first frame",
+        },
+      },
+      required: ["prompt"],
+    },
+  },
+  {
+    name: "gemini-video-check",
+    description: `Check the status of a video generation operation.
+
+If the video is still processing, returns the current status.
+If the video is complete, returns the video data.
+
+Parameters:
+- operationId: The operation ID from gemini-video-generate (optional - uses last operation if not provided)
+- outputPath: Optional path to save the video file when complete`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        operationId: {
+          type: "string",
+          description: "Operation ID from gemini-video-generate (uses last operation if not provided)",
+        },
+        outputPath: {
+          type: "string",
+          description: "Optional path to save the video file",
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
 // Create MCP server
@@ -497,6 +578,199 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       return { content };
+
+    } else if (name === "gemini-video-generate") {
+      const { prompt, aspectRatio, resolution, firstFrameBase64 } = args as {
+        prompt: string;
+        aspectRatio?: string;
+        resolution?: string;
+        firstFrameBase64?: string;
+      };
+
+      // Build video generation config
+      const config: Record<string, unknown> = {
+        aspectRatio: aspectRatio || "16:9",
+      };
+      if (resolution) {
+        config.resolution = resolution;
+      }
+
+      // Build request params
+      const requestParams: Record<string, unknown> = {
+        model: VIDEO_MODEL,
+        prompt: prompt,
+        config: config,
+      };
+
+      // Add first frame if provided
+      if (firstFrameBase64) {
+        requestParams.image = {
+          imageBytes: firstFrameBase64,
+          mimeType: "image/png",
+        };
+      }
+
+      // Start video generation
+      const operation = await (ai.models as any).generateVideos(requestParams);
+
+      // Store operation info
+      const operationId = operation.name || `veo-${Date.now()}`;
+      videoOperations.set(operationId, {
+        operationId,
+        prompt,
+        startedAt: Date.now(),
+        aspectRatio: aspectRatio || "16:9",
+      });
+      lastVideoOperationId = operationId;
+
+      // Do a quick 10-second poll in case it completes fast (unlikely but possible)
+      await new Promise(resolve => setTimeout(resolve, 10000));
+
+      try {
+        const checkOperation = await (ai.operations as any).getVideosOperation({ operation });
+        if (checkOperation.done) {
+          // Completed quickly! Return the video
+          const video = checkOperation.response?.generatedVideos?.[0];
+          if (video?.video) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Video generation completed quickly!\n\nPrompt: "${prompt}"\nOperation ID: ${operationId}`,
+                },
+              ],
+              _meta: { operationId, status: "complete" },
+            };
+          }
+        }
+      } catch {
+        // Poll failed, that's fine - just return the operation ID
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Video generation started!\n\nPrompt: "${prompt}"\nOperation ID: ${operationId}\nAspect Ratio: ${aspectRatio || "16:9"}\n\nUse gemini-video-check to poll for completion (typically takes 1-5 minutes).`,
+          },
+        ],
+        _meta: { operationId, status: "processing" },
+      };
+
+    } else if (name === "gemini-video-check") {
+      const { operationId: providedId, outputPath } = args as {
+        operationId?: string;
+        outputPath?: string;
+      };
+
+      // Use provided ID or fall back to last operation
+      const operationId = providedId || lastVideoOperationId;
+      if (!operationId) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Error: No operation ID provided and no recent video generation found.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Get stored operation info
+      const opInfo = videoOperations.get(operationId);
+      const elapsedSeconds = opInfo ? Math.round((Date.now() - opInfo.startedAt) / 1000) : 0;
+
+      try {
+        // Check operation status
+        const operation = await (ai.operations as any).getVideosOperation({
+          operation: { name: operationId }
+        });
+
+        if (!operation.done) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Video still processing...\n\nOperation ID: ${operationId}\nElapsed: ${elapsedSeconds} seconds\n${opInfo ? `Prompt: "${opInfo.prompt}"` : ""}\n\nTry again in 30 seconds.`,
+              },
+            ],
+            _meta: { operationId, status: "processing", elapsedSeconds },
+          };
+        }
+
+        // Video is complete!
+        const video = operation.response?.generatedVideos?.[0];
+        if (!video?.video) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Video generation completed but no video was returned.\n\nOperation ID: ${operationId}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Download the video
+        const videoData = await (ai.files as any).download({ file: video.video });
+
+        // Save to file if outputPath provided
+        let savedPath: string | null = null;
+        if (outputPath) {
+          const fs = await import("fs");
+          const path = await import("path");
+
+          // Ensure directory exists
+          const dir = path.dirname(outputPath);
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+          }
+
+          // Add .mp4 extension if not present
+          const finalPath = outputPath.endsWith(".mp4") ? outputPath : `${outputPath}.mp4`;
+
+          // Write video file
+          if (videoData.videoBytes) {
+            fs.writeFileSync(finalPath, Buffer.from(videoData.videoBytes));
+            savedPath = finalPath;
+          } else if (video.video.videoBytes) {
+            fs.writeFileSync(finalPath, Buffer.from(video.video.videoBytes));
+            savedPath = finalPath;
+          }
+        }
+
+        // Clean up stored operation
+        videoOperations.delete(operationId);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Video generation complete!\n\nOperation ID: ${operationId}\nTotal time: ${elapsedSeconds} seconds\n${opInfo ? `Prompt: "${opInfo.prompt}"` : ""}${savedPath ? `\n\nSaved to: ${savedPath}` : ""}`,
+            },
+          ],
+          _meta: {
+            operationId,
+            status: "complete",
+            savedPath,
+            videoUri: video.video?.uri || video.video?.videoUri,
+          },
+        };
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error checking video status: ${errorMessage}\n\nOperation ID: ${operationId}`,
+            },
+          ],
+          isError: true,
+        };
+      }
 
     } else {
       return {
